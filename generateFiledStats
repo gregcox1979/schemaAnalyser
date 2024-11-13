@@ -1,0 +1,151 @@
+var collName = "<colName>"
+db.getCollection(collName+'_fieldStats').drop()
+db.getCollection(collName+'_fieldStats').createIndex({path:1,field:1,dataType:1},{unique:true})
+var docCount = db.getCollection(collName).count();
+var cur = db.getCollection(collName).find({}).batchSize(10000); // set batchSize
+
+var i = 0;
+var j = 0;
+var ids= [];
+var runAgg='N'
+
+cur.forEach(doc=> {
+    
+    ids.push(doc['_id']);
+    i=i+1;
+    j=j+1;
+    
+    if(i==1000 || j==docCount) {
+        print(1);
+        runAgg='Y';
+    } else {
+        runAgg='N';
+    }
+    
+    if (runAgg=='Y') {
+       
+        m = {$match:{ _id: {$in:ids}}};
+        
+        var pipeline = [
+            m,
+            {
+                "$replaceWith":
+                    extractSchema()     
+            },
+        
+            {
+                "$unwind":
+                    "$content"
+            },
+        
+            {
+                "$unwind":
+                    "$content.schema"
+            },
+        
+            {
+                "$group": {
+                    "_id": { "subdocpath": "$content.subdocpath", "fieldname": "$content.schema.fieldname", "fieldtype": "$content.schema.fieldtype" },
+                    "count": { "$sum": 1 },
+                    "min": { "$min": "$content.schema.fieldvalue" },
+                    "max": { "$max": "$content.schema.fieldvalue" },
+                }
+            },
+        
+            {
+                "$group": {
+                    "_id": { "subdocpath": "$_id.subdocpath", "fieldname": "$_id.fieldname" },
+                    "fieldtypes": {
+                        "$push": {
+                            "fieldtype": "$_id.fieldtype",
+                            "count": "$count",
+                            "min": { "$cond": [{ "$in": ["$_id.fieldtype", ["null", "array", "object"]] }, "$$REMOVE", "$min"] },
+                            "max": { "$cond": [{ "$in": ["$_id.fieldtype", ["null", "array", "object"]] }, "$$REMOVE", "$max"] },
+                        }
+                    },
+                }
+            },
+        
+            {
+                "$sort": {
+                    "_id.subdocpath": 1,
+                    "_id.fieldname": 1,
+                }
+            },
+            {
+                "$unwind":"$fieldtypes"
+            },        
+            {
+                "$set": {
+                    "path": "$_id.subdocpath",
+                    "field": "$_id.fieldname",
+                    "fieldbson": { $subtract: [{ $bsonSize: { _: "$_id.fieldname" } }, 13] },
+                    "_id": "$$REMOVE"
+                }
+            },
+        
+            {
+                "$addFields": {
+                    "bsonTotal": { $multiply: ["$fieldbson", "$fieldtypes.count"] },
+                    "count":"$fieldtypes.count",
+                    "min":"$fieldtypes.min",
+                    "max":"$fieldtypes.max",
+                    "dataType":"$fieldtypes.fieldtype"
+                }
+            },
+        
+            {
+                "$project": {
+                    "fieldtypes": 0
+                }
+            },
+            {
+                "$merge":{
+                    "into": collName+'_fieldStats',
+                    "let": {
+                        "p_count":"$count",
+                        "p_min":{"$ifNull":["$min",0]},
+                        "p_max":{"$ifNull":["$max",0]},
+                        "p_bsonTotal":"$bsonTotal"
+                    },
+                    "on": ["path","field","dataType"],
+                    "whenMatched": [
+                        {
+                          "$set": {
+                            "count": {
+                              "$add": [
+                                "$count",
+                                "$$p_count"
+                              ]
+                            },
+                            "min": {
+                              "$min": [
+                                "$min",
+                                "$$p_min"
+                              ]
+                            },
+                            "max": {
+                              "$max": [
+                                "$max",
+                                "$$p_max"
+                              ]
+                            },
+                            "bsonTotal": {
+                              "$add": [
+                                "$bsonTotal",
+                                "$$p_bsonTotal"
+                              ]
+                            }                            
+                          }
+                        }
+                    ],
+                    "whenNotMatched": "insert"                    
+                }
+            }
+        ] 
+        db.getCollection(collName).aggregate(pipeline);
+            
+        ids= [];
+        i=0;
+    }
+})
