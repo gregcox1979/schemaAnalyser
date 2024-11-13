@@ -1,0 +1,20 @@
+var collName = "<colName>"
+var cur = db.getCollection(collName+'_fieldStats').aggregate([
+    {
+        $match: {
+            field: {$ne:'<arrayitem>'}
+        }
+    }
+    ])
+    
+var i=1
+cur.forEach(doc=> {
+    if(i==1){
+        print('"PATH","FIELD","DATA_TYPE","FIELD_BSON_SIZE","COUNT","BSON_TOTAL_SIZE","MIN_VALUE","MAX_VALUE"')
+    }  
+    
+    print('"'+doc['path']+'","'+doc['field']+'","'+doc['dataType']+'",'+doc['fieldbson']+','+doc['count']+','+doc['bsonTotal']+',"'+doc['min']+'","'+doc['max']+'"')
+    i=i+1;
+})
+    
+    
